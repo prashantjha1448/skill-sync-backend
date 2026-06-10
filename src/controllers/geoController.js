@@ -45,11 +45,12 @@ exports.getNearbyJobs = async (req, res, next) => {
 // GET /geo/nearby-freelancers
 exports.getNearbyFreelancers = async (req, res, next) => {
   try {
-    const { lat, lng, radius = 25, category } = req.query;
+    const { lat, lng, radius = 25, category, keyword } = req.query;
     if (!lat || !lng) return res.status(400).json({ success: false, message: 'lat and lng required' });
 
     const query = {
-      role: 'freelancer', isAvailable: true,
+      role: 'FREELANCER',
+      isAvailable: true,
       location: {
         $near: {
           $geometry: { type: 'Point', coordinates: [Number(lng), Number(lat)] },
@@ -57,10 +58,32 @@ exports.getNearbyFreelancers = async (req, res, next) => {
         },
       },
     };
-    if (category) query.skills = { $in: [new RegExp(category, 'i')] };
 
-    const freelancers = await User.find(query).select('-password').limit(20);
-    res.status(200).json({ success: true, count: freelancers.length, data: freelancers });
+    if (category && category !== 'all' && category !== 'All') {
+      query.skills = { $in: [new RegExp(category, 'i')] };
+    }
+
+    if (keyword) {
+      query.$or = [
+        { name: { $regex: keyword, $options: 'i' } },
+        { username: { $regex: keyword, $options: 'i' } },
+        { title: { $regex: keyword, $options: 'i' } },
+        { bio: { $regex: keyword, $options: 'i' } },
+      ];
+    }
+
+    const freelancers = await User.find(query).select('-password').limit(50);
+    const withDist = freelancers.map((f) => ({
+      ...f.toObject(),
+      distance: Math.round(haversine(Number(lat), Number(lng), f.location.coordinates[1], f.location.coordinates[0]) * 10) / 10,
+    }));
+
+    res.status(200).json({
+      success: true,
+      count: withDist.length,
+      freelancers: withDist,
+      data: withDist,
+    });
   } catch (error) { next(error); }
 };
 

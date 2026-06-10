@@ -10,11 +10,13 @@ const {
   updateJob, 
   deleteJob,
   getMyJobs,
+  getLandingStats,
 } = require('../controllers/jobController');
 
 const { protect, authorize, optionalProtect } = require('../middlewares/authMiddleware');
 
 // 🚨 WARNING: Specific routes jaise '/search' hamesha '/:id' ke upar hone chahiye!
+router.get('/stats', getLandingStats);
 router.get('/search', searchJobs);
 router.get('/my-jobs', protect, authorize('client'), getMyJobs);
 

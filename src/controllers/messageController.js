@@ -57,7 +57,7 @@ exports.getConversations = async (req, res, next) => {
 
     const convMap = new Map();
     for (const msg of messages) {
-      const otherUserId = msg.sender === userId ? msg.receiver : msg.sender;
+      const otherUserId = msg.sender.toString() === userId.toString() ? msg.receiver.toString() : msg.sender.toString();
       const jobId       = msg.job?._id?.toString() || msg.job?.toString();
       const key         = `${jobId}_${otherUserId}`;
 
@@ -85,7 +85,7 @@ exports.getConversations = async (req, res, next) => {
           unreadCount:     0,
         });
       }
-      if (msg.receiver === userId && !msg.isRead) convMap.get(key).unreadCount += 1;
+      if (msg.receiver.toString() === userId.toString() && !msg.isRead) convMap.get(key).unreadCount += 1;
     }
 
     res.status(200).json({ success: true, conversations: Array.from(convMap.values()) });

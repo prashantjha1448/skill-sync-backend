@@ -2,6 +2,7 @@ const Job = require('../models/Job');
 const Proposal = require('../models/Proposal');
 const redisClient = require('../config/redis');
 const User = require('../models/User');
+const Earnings = require('../models/Earnings');
 
 // @desc    Create a new Job
 // @route   POST /api/v1/jobs
@@ -131,6 +132,11 @@ exports.getJobById = async (req, res, next) => {
       );
 
       jobData.proposals = enrichedProposals;
+    } else if (req.user && req.user.role === 'FREELANCER') {
+      const myProposal = await Proposal.findOne({ job: id, freelancer: req.user.id }).lean();
+      if (myProposal) {
+        jobData.myProposal = myProposal;
+      }
     }
 
     res.status(200).json({
@@ -304,6 +310,35 @@ exports.getMyJobs = async (req, res, next) => {
       success: true,
       count: jobs.length,
       data: jobs,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get landing page stats (Live Jobs, Freelancers, Clients, Total Paid Out)
+// @route   GET /api/v1/jobs/stats
+// @access  Public
+exports.getLandingStats = async (req, res, next) => {
+  try {
+    const activeJobs = await Job.countDocuments({ status: 'open' });
+    const freelancers = await User.countDocuments({ role: 'FREELANCER' });
+    const clients = await User.countDocuments({ role: 'CLIENT' });
+
+    // Calculate sum of allTimeIncome from Earnings collection
+    const earningsAgg = await Earnings.aggregate([
+      { $group: { _id: null, total: { $sum: '$allTimeIncome' } } }
+    ]);
+    const totalPaidOut = earningsAgg[0]?.total || 0;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        activeJobs,
+        freelancers,
+        clients,
+        totalPaidOut
+      }
     });
   } catch (error) {
     next(error);

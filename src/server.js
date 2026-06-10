@@ -25,8 +25,11 @@ const io = new Server(server, {
 // Socket Authentication Middleware
 io.use(async (socket, next) => {
   try {
-    const token = socket.handshake.auth?.token || socket.handshake.headers?.token || socket.handshake.query?.token;
+    let token = socket.handshake.auth?.token || socket.handshake.headers?.token || socket.handshake.query?.token;
     if (token) {
+      if (token.startsWith('Bearer ')) {
+        token = token.slice(7);
+      }
       const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret123');
       const user = await User.findById(decoded.id).select('-password');
       if (user) {

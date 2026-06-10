@@ -31,7 +31,7 @@ const sendTokenResponse = (user, statusCode, res) => {
 // POST /auth/register
 exports.registerUser = async (req, res, next) => {
   try {
-    const { name, email, password, mobileNumber, role, username } = req.body;
+    const { name, email, password, mobileNumber, role, username, gender } = req.body;
 
     const emailLower = email.toLowerCase().trim();
 
