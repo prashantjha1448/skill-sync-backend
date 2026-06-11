@@ -1,5 +1,44 @@
 const Message = require('../models/Message');
 const User = require('../models/User');
+const cloudinary = require('../config/cloudinary');
+
+// POST /messages/upload
+exports.uploadChatFile = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No file uploaded' });
+    }
+
+    const b64 = Buffer.from(req.file.buffer).toString('base64');
+    const dataURI = `data:${req.file.mimetype};base64,${b64}`;
+
+    // Upload to Cloudinary (resource_type auto-detects images, videos, audio, documents)
+    const result = await cloudinary.uploader.upload(dataURI, {
+      folder: 'localwork_chat',
+      resource_type: 'auto',
+    });
+
+    // Categorise file type
+    let fileType = 'document';
+    if (req.file.mimetype.startsWith('image/')) {
+      fileType = 'image';
+    } else if (req.file.mimetype.startsWith('video/')) {
+      fileType = 'video';
+    } else if (req.file.mimetype.startsWith('audio/')) {
+      fileType = 'audio';
+    }
+
+    res.status(200).json({
+      success: true,
+      fileUrl: result.secure_url,
+      fileType,
+      fileName: req.file.originalname,
+    });
+  } catch (error) {
+    console.error('Chat file upload failed:', error);
+    next(error);
+  }
+};
 
 // POST /messages
 exports.sendMessage = async (req, res, next) => {

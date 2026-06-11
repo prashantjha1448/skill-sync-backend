@@ -1,6 +1,9 @@
 const Earnings = require('../models/Earnings');
 const Job = require('../models/Job');
 const Task = require('../models/Task');
+const Kyc = require('../models/Kyc');
+const BankDetails = require('../models/BankDetails');
+const User = require('../models/User');
 
 // @route GET /api/v1/dashboard/client
 exports.getClientDashboard = async (req, res, next) => {
@@ -64,7 +67,12 @@ exports.getFreelancerDashboard = async (req, res, next) => {
 // @route GET /api/v1/dashboard/wallet
 exports.getWallet = async (req, res, next) => {
   try {
-    const earnings = await Earnings.findOne({ userId: req.user.id });
+    const userId = req.user.id;
+    const earnings = await Earnings.findOne({ userId });
+    const kyc = await Kyc.findOne({ userId });
+    const user = await User.findById(userId);
+    const bankAccounts = await BankDetails.find({ userId });
+
     res.status(200).json({
       success: true,
       data: {
@@ -72,6 +80,12 @@ exports.getWallet = async (req, res, next) => {
         escrowBalance: earnings?.escrowBalance || 0,
         todayIncome: earnings?.todayIncome || 0,
         allTimeIncome: earnings?.allTimeIncome || 0,
+        kycStatus: kyc?.status || 'not_submitted',
+        kycVerified: kyc?.status === 'verified',
+        aadharVerified: kyc?.aadharVerified || false,
+        panVerified: kyc?.panVerified || false,
+        hasWithdrawalPin: !!user?.withdrawalPin,
+        bankAccounts: bankAccounts || [],
       },
     });
   } catch (error) {

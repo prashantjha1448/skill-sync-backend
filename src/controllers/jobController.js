@@ -9,6 +9,23 @@ const Earnings = require('../models/Earnings');
 // @access  Private (Client Only)
 exports.createJob = async (req, res, next) => {
   try {
+    const Kyc = require('../models/Kyc');
+    const User = require('../models/User');
+
+    // Enforce KYC check (Aadhaar, PAN, and Mobile number)
+    const kyc = await Kyc.findOne({ userId: req.user.id });
+    const user = await User.findById(req.user.id);
+
+    const isKycVerified = kyc && kyc.aadharVerified && kyc.panVerified;
+    const hasMobile = user && user.mobileNumber && user.mobileNumber.trim().length > 0;
+
+    if (!isKycVerified || !hasMobile) {
+      return res.status(400).json({
+        success: false,
+        message: 'KYC verification (Aadhaar, PAN, and Mobile number) is required to post a new job. Please complete your profile and KYC verification first.',
+      });
+    }
+
     const {
       title,
       description,
@@ -77,14 +94,32 @@ exports.getJobs = async (req, res, next) => {
     console.log('Serving from MongoDB 🗄️');
     const jobs = await Job.find({ status: 'open' }).sort({ createdAt: -1 });
 
+    const enrichedJobs = await Promise.all(
+      jobs.map(async (job) => {
+        try {
+          const clientInfo = await User.findById(job.client)
+            .select('name username profilePic avatar email kycVerified')
+            .lean();
+          if (clientInfo) {
+            clientInfo.id = clientInfo._id;
+            clientInfo.profilePic = clientInfo.profilePic || clientInfo.avatar;
+            clientInfo.isVerified = !!(clientInfo.kycVerified);
+          }
+          return { ...job.toObject(), clientInfo };
+        } catch {
+          return job.toObject();
+        }
+      })
+    );
+
     if (redisClient.isOpen) {
-      await redisClient.setEx(cacheKey, 3600, JSON.stringify(jobs)).catch(() => {});
+      await redisClient.setEx(cacheKey, 3600, JSON.stringify(enrichedJobs)).catch(() => {});
     }
 
     res.status(200).json({
       success: true,
-      count: jobs.length,
-      data: jobs
+      count: enrichedJobs.length,
+      data: enrichedJobs
     });
   } catch (error) {
     next(error);
@@ -105,6 +140,19 @@ exports.getJobById = async (req, res, next) => {
 
     const jobData = job.toObject();
 
+    // Fetch clientInfo
+    try {
+      const clientInfo = await User.findById(job.client)
+        .select('name username profilePic avatar email kycVerified')
+        .lean();
+      if (clientInfo) {
+        clientInfo.id = clientInfo._id;
+        clientInfo.profilePic = clientInfo.profilePic || clientInfo.avatar;
+        clientInfo.isVerified = !!(clientInfo.kycVerified);
+        jobData.clientInfo = clientInfo;
+      }
+    } catch {}
+
     // If the logged-in user is the job owner, enrich with proposal + freelancer data
     if (req.user && String(job.client) === String(req.user.id)) {
       const proposals = await Proposal.find({ job: id }).sort('-createdAt').lean();
@@ -113,7 +161,7 @@ exports.getJobById = async (req, res, next) => {
         proposals.map(async (proposal) => {
           try {
             const rawFreelancer = await User.findById(proposal.freelancer)
-              .select('name email profilePic avatar title mobileNumber')
+              .select('name email profilePic avatar title mobileNumber isVerified kycVerified')
               .lean();
             let freelancer = null;
             if (rawFreelancer) {
@@ -121,7 +169,8 @@ exports.getJobById = async (req, res, next) => {
                 ...rawFreelancer,
                 id: rawFreelancer._id,
                 phone: rawFreelancer.mobileNumber,
-                profilePic: rawFreelancer.profilePic || rawFreelancer.avatar
+                profilePic: rawFreelancer.profilePic || rawFreelancer.avatar,
+                isVerified: !!(rawFreelancer.kycVerified),
               };
             }
             return { ...proposal, freelancerInfo: freelancer };
@@ -205,11 +254,12 @@ exports.searchJobs = async (req, res, next) => {
       jobs.map(async (job) => {
         try {
           const clientInfo = await User.findById(job.client)
-            .select('name username profilePic avatar email')
+            .select('name username profilePic avatar email kycVerified')
             .lean();
           if (clientInfo) {
             clientInfo.id = clientInfo._id;
             clientInfo.profilePic = clientInfo.profilePic || clientInfo.avatar;
+            clientInfo.isVerified = !!(clientInfo.kycVerified);
           }
           return { ...job, clientInfo };
         } catch {
@@ -339,6 +389,267 @@ exports.getLandingStats = async (req, res, next) => {
         clients,
         totalPaidOut
       }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Complete a job (Mutual Approval by client and freelancer)
+// @route   PUT /api/v1/jobs/:id/complete
+// @access  Private
+exports.completeJob = async (req, res, next) => {
+  try {
+    const job = await Job.findById(req.params.id);
+    if (!job) {
+      return res.status(404).json({ success: false, message: 'Job not found' });
+    }
+
+    const userId = req.user.id.toString();
+    const isClient = job.client.toString() === userId;
+    const isFreelancer = job.assignedTo && job.assignedTo.toString() === userId;
+
+    if (!isClient && !isFreelancer) {
+      return res.status(403).json({ success: false, message: 'Not authorized to perform this action' });
+    }
+
+    if (job.status !== 'in-progress') {
+      return res.status(400).json({ success: false, message: 'Job is not in-progress' });
+    }
+
+    if (isClient) {
+      job.completionRequestedByClient = true;
+    }
+    if (isFreelancer) {
+      job.completionRequestedByFreelancer = true;
+    }
+
+    // If both client and freelancer approve completion
+    if (job.completionRequestedByClient && job.completionRequestedByFreelancer) {
+      job.status = 'completed';
+      
+      // Release payment to freelancer's wallet
+      const payoutAmount = job.budget || 0;
+      const freelancerId = job.assignedTo;
+
+      // Deduct from Client's Escrow
+      await Earnings.findOneAndUpdate(
+        { userId: job.client },
+        { $inc: { escrowBalance: -payoutAmount } }
+      );
+
+      // Add to Freelancer's Wallet & Income Ledger
+      await Earnings.findOneAndUpdate(
+        { userId: freelancerId },
+        {
+          $inc: {
+            walletBalance: payoutAmount,
+            todayIncome: payoutAmount,
+            allTimeIncome: payoutAmount,
+            completedJobs: 1
+          }
+        },
+        { upsert: true }
+      );
+
+      // Set associated Task status to completed if it exists
+      const Task = require('../models/Task');
+      await Task.findOneAndUpdate(
+        { job: job._id },
+        { status: 'completed', completedAt: Date.now() }
+      ).catch(() => {});
+
+      // Create escrow release transaction record
+      const Transaction = require('../models/Transaction');
+      await Transaction.create({
+        sender: job.client,
+        receiver: String(freelancerId),
+        job: job._id,
+        amount: payoutAmount,
+        type: 'escrow_release',
+        status: 'completed'
+      });
+
+      // Notify both parties
+      const { createNotification } = require('../utils/notification');
+      const io = req.app.get('io');
+      
+      // Notify client
+      await createNotification({
+        recipient: String(job.client),
+        sender: userId,
+        type: 'payment_alert',
+        message: `Job "${job.title}" has been successfully completed. ₹${payoutAmount} released from escrow.`,
+        relatedId: job._id,
+        onModel: 'Job',
+        io,
+      });
+
+      // Notify freelancer
+      await createNotification({
+        recipient: String(freelancerId),
+        sender: userId,
+        type: 'payment_alert',
+        message: `Job "${job.title}" has been completed. ₹${payoutAmount} transferred to your wallet!`,
+        relatedId: job._id,
+        onModel: 'Job',
+        io,
+      });
+    } else {
+      // Notify the other party about the completion request
+      const { createNotification } = require('../utils/notification');
+      const io = req.app.get('io');
+      const senderName = req.user.name;
+      const recipientId = isClient ? String(job.assignedTo) : String(job.client);
+      
+      await createNotification({
+        recipient: recipientId,
+        sender: userId,
+        type: 'task_update',
+        message: `${senderName} has marked "${job.title}" as completed. Please approve to release payment.`,
+        relatedId: job._id,
+        onModel: 'Job',
+        io,
+      });
+    }
+
+    await job.save();
+
+    if (redisClient.isOpen) {
+      await redisClient.del('jobs:active').catch(() => {});
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Completion request registered',
+      data: job
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Cancel a job (Mutual Approval by client and freelancer)
+// @route   PUT /api/v1/jobs/:id/cancel
+// @access  Private
+exports.cancelJob = async (req, res, next) => {
+  try {
+    const job = await Job.findById(req.params.id);
+    if (!job) {
+      return res.status(404).json({ success: false, message: 'Job not found' });
+    }
+
+    const userId = req.user.id.toString();
+    const isClient = job.client.toString() === userId;
+    const isFreelancer = job.assignedTo && job.assignedTo.toString() === userId;
+
+    if (!isClient && !isFreelancer) {
+      return res.status(403).json({ success: false, message: 'Not authorized to perform this action' });
+    }
+
+    if (job.status !== 'in-progress') {
+      return res.status(400).json({ success: false, message: 'Job is not in-progress' });
+    }
+
+    if (isClient) {
+      job.cancellationRequestedByClient = true;
+    }
+    if (isFreelancer) {
+      job.cancellationRequestedByFreelancer = true;
+    }
+
+    // If both client and freelancer approve cancellation
+    if (job.cancellationRequestedByClient && job.cancellationRequestedByFreelancer) {
+      job.status = 'cancelled';
+      
+      // Refund payment to client's wallet
+      const refundAmount = job.budget || 0;
+      const freelancerId = job.assignedTo;
+
+      // Deduct from Client's Escrow
+      await Earnings.findOneAndUpdate(
+        { userId: job.client },
+        { $inc: { escrowBalance: -refundAmount } }
+      );
+
+      // Refund to Client's Wallet
+      await Earnings.findOneAndUpdate(
+        { userId: job.client },
+        { $inc: { walletBalance: refundAmount } },
+        { upsert: true }
+      );
+
+      // Set associated Task status to cancelled if it exists
+      const Task = require('../models/Task');
+      await Task.findOneAndUpdate(
+        { job: job._id },
+        { status: 'cancelled' }
+      ).catch(() => {});
+
+      // Create escrow refund transaction record
+      const Transaction = require('../models/Transaction');
+      await Transaction.create({
+        sender: String(freelancerId),
+        receiver: job.client,
+        job: job._id,
+        amount: refundAmount,
+        type: 'refund',
+        status: 'completed'
+      });
+
+      // Notify both parties
+      const { createNotification } = require('../utils/notification');
+      const io = req.app.get('io');
+      
+      // Notify client
+      await createNotification({
+        recipient: String(job.client),
+        sender: userId,
+        type: 'payment_alert',
+        message: `Job "${job.title}" has been cancelled. ₹${refundAmount} has been refunded to your wallet.`,
+        relatedId: job._id,
+        onModel: 'Job',
+        io,
+      });
+
+      // Notify freelancer
+      await createNotification({
+        recipient: String(freelancerId),
+        sender: userId,
+        type: 'system_alert',
+        message: `Job "${job.title}" has been mutually cancelled. Escrow has been refunded to client.`,
+        relatedId: job._id,
+        onModel: 'Job',
+        io,
+      });
+    } else {
+      // Notify the other party about the cancellation request
+      const { createNotification } = require('../utils/notification');
+      const io = req.app.get('io');
+      const senderName = req.user.name;
+      const recipientId = isClient ? String(job.assignedTo) : String(job.client);
+      
+      await createNotification({
+        recipient: recipientId,
+        sender: userId,
+        type: 'system_alert',
+        message: `${senderName} has requested to cancel the job "${job.title}". Please approve to cancel.`,
+        relatedId: job._id,
+        onModel: 'Job',
+        io,
+      });
+    }
+
+    await job.save();
+
+    if (redisClient.isOpen) {
+      await redisClient.del('jobs:active').catch(() => {});
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Cancellation request registered',
+      data: job
     });
   } catch (error) {
     next(error);

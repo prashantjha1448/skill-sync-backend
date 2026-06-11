@@ -2,6 +2,7 @@ const Task = require('../models/Task');
 const Job = require('../models/Job');
 const sendEmail = require('../utils/sendEmail');
 const sendWhatsApp = require('../utils/sendWhatsApp');
+const { createNotification } = require('../utils/notification');
 
 // @desc    Update Task Status (With Live Socket, Email & WhatsApp alerts)
 // @route   PUT /api/v1/tasks/:taskId/status
@@ -37,14 +38,17 @@ exports.updateTaskStatus = async (req, res, next) => {
     if (status === 'working') alertMessage = `Work has been started by ${task.freelancer.name}. 🛠️`;
     if (status === 'completed') alertMessage = `Task has been marked completed by ${task.freelancer.name}. Please verify and release funds. ✅`;
 
-    // 1. Live Socket Notification to Client
+    // 1. Live Socket + DB Notification to Client
     const io = req.app.get('io');
-    if (io) {
-      io.to(task.client._id.toString()).emit('receive_notification', {
-        type: 'task_status_update',
-        message: alertMessage
-      });
-    }
+    await createNotification({
+      recipient: task.client._id.toString(),
+      sender: req.user._id.toString(),
+      type: 'task_update',
+      message: alertMessage,
+      relatedId: task._id,
+      onModel: 'Task',
+      io,
+    });
 
     // 2. Multi-Channel Alerts (Email & WhatsApp) in background
     try {

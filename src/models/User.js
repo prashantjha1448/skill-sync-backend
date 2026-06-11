@@ -44,12 +44,15 @@ const userSchema = new mongoose.Schema(
     isAvailable: { type: Boolean, default: true },
     averageRating: { type: Number, default: 0 },
     totalJobsCompleted: { type: Number, default: 0 },
-    isVerified: { type: Boolean, default: false },
+    isVerified: { type: Boolean, default: false },   // Email OTP verified
+    kycVerified: { type: Boolean, default: false },  // Aadhaar + PAN both verified
     
     // Security & OTP fields
     twoFactorEnabled: { type: Boolean, default: false },
     resetPasswordOtp: { type: String, default: null },
-    resetPasswordExpires: { type: Date, default: null }
+    resetPasswordExpires: { type: Date, default: null },
+    blockedUsers: { type: [String], default: [] },
+    withdrawalPin: { type: String, default: null }
   },
   { 
     timestamps: true,

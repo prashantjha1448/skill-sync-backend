@@ -26,21 +26,23 @@ const io = new Server(server, {
 io.use(async (socket, next) => {
   try {
     let token = socket.handshake.auth?.token || socket.handshake.headers?.token || socket.handshake.query?.token;
-    if (token) {
-      if (token.startsWith('Bearer ')) {
-        token = token.slice(7);
-      }
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret123');
-      const user = await User.findById(decoded.id).select('-password');
-      if (user) {
-        socket.user = user;
-        socket.userId = user._id.toString();
-      }
+    if (!token) {
+      return next(new Error('Authentication error: Token required'));
     }
+    if (token.startsWith('Bearer ')) {
+      token = token.slice(7);
+    }
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret123');
+    const user = await User.findById(decoded.id).select('-password');
+    if (!user) {
+      return next(new Error('Authentication error: User not found'));
+    }
+    socket.user = user;
+    socket.userId = user._id.toString();
     next();
   } catch (err) {
     console.error('Socket Auth Error:', err.message);
-    next();
+    next(new Error('Authentication error: ' + err.message));
   }
 });
 

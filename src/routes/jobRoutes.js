@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 
-// Yahan humne searchJobs ko successfully import kar liya hai 👇
 const { 
   createJob, 
   getJobs, 
@@ -11,6 +10,8 @@ const {
   deleteJob,
   getMyJobs,
   getLandingStats,
+  completeJob,
+  cancelJob,
 } = require('../controllers/jobController');
 
 const { protect, authorize, optionalProtect } = require('../middlewares/authMiddleware');
@@ -29,6 +30,9 @@ router.route('/:id')
   .get(optionalProtect, getJobById)
   .put(protect, authorize('client'), updateJob)
   .delete(protect, authorize('client'), deleteJob);
+
+router.put('/:id/complete', protect, completeJob);
+router.put('/:id/cancel', protect, cancelJob);
 
 // Convenience: Apply to job (proxies to proposals)
 const { submitProposal } = require('../controllers/proposalController');

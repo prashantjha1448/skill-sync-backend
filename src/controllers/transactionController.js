@@ -1,6 +1,8 @@
 const Earnings = require('../models/Earnings'); // MongoDB
 const Job = require('../models/Job');       // MongoDB
 const Task = require('../models/Task');     // MongoDB
+const Transaction = require('../models/Transaction');
+const { createNotification } = require('../utils/notification');
 
 // @desc    Client deposits money into Escrow when job starts
 // @route   POST /api/v1/transactions/job/:jobId/deposit
@@ -31,6 +33,30 @@ exports.depositToEscrow = async (req, res, next) => {
     // 3. MongoDB Job status update karein
     job.status = 'ongoing';
     await job.save();
+
+    // Create escrow deposit transaction record
+    await Transaction.create({
+      sender: req.user.id,
+      receiver: job.assignedTo ? String(job.assignedTo) : req.user.id,
+      job: job._id,
+      amount: budget,
+      type: 'escrow_deposit',
+      status: 'completed'
+    });
+
+    // Notify the assigned freelancer
+    if (job.assignedTo) {
+      const io = req.app.get('io');
+      await createNotification({
+        recipient: String(job.assignedTo),
+        sender: req.user.id,
+        type: 'payment_alert',
+        message: `Client ${req.user.name} deposited ₹${budget} in Escrow for "${job.title}"`,
+        relatedId: job._id,
+        onModel: 'Job',
+        io,
+      });
+    }
 
     res.status(200).json({
       success: true,
@@ -89,6 +115,28 @@ exports.releasePayment = async (req, res, next) => {
     // 3. MongoDB status ko final close karein
     job.status = 'completed';
     await job.save();
+
+    // Create escrow release transaction record
+    await Transaction.create({
+      sender: req.user.id,
+      receiver: String(freelancerId),
+      job: job._id,
+      amount: payoutAmount,
+      type: 'escrow_release',
+      status: 'completed'
+    });
+
+    // Notify the freelancer of the payout release
+    const io = req.app.get('io');
+    await createNotification({
+      recipient: String(freelancerId),
+      sender: req.user.id,
+      type: 'payment_alert',
+      message: `Client ${req.user.name} released ₹${payoutAmount} payment for "${job.title}"`,
+      relatedId: job._id,
+      onModel: 'Job',
+      io,
+    });
 
     res.status(200).json({
       success: true,

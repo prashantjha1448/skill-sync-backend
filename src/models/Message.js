@@ -17,12 +17,31 @@ const messageSchema = new mongoose.Schema(
     },
     text: {
       type: String,
-      required: true,
-      trim: true
+      trim: true,
+      default: ''
+    },
+    fileUrl: {
+      type: String,
+      default: null
+    },
+    fileType: {
+      type: String,
+      enum: ['text', 'image', 'video', 'audio', 'document', 'location'],
+      default: 'text'
+    },
+    location: {
+      latitude: { type: Number, default: null },
+      longitude: { type: Number, default: null },
+      address: { type: String, default: '' }
     },
     isRead: {
       type: Boolean,
       default: false
+    },
+    status: {
+      type: String,
+      enum: ['sent', 'delivered', 'read'],
+      default: 'sent'
     }
   },
   { timestamps: true }

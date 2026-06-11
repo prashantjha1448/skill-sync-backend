@@ -3,6 +3,7 @@ const Kyc = require('../models/Kyc');
 const BankDetails = require('../models/BankDetails');
 const Earnings = require('../models/Earnings');
 const cloudinary = require('../config/cloudinary');
+const Job = require('../models/Job');
 
 // GET /profile/me
 exports.getProfile = async (req, res, next) => {
@@ -14,6 +15,9 @@ exports.getProfile = async (req, res, next) => {
     user.earnings = await Earnings.findOne({ userId: req.user.id }).lean();
     user.kyc = await Kyc.findOne({ userId: req.user.id }).lean();
     user.bankDetails = await BankDetails.findOne({ userId: req.user.id }).lean();
+
+    // kycVerified = dedicated KYC flag (Aadhaar + PAN) — use as truth, fallback to kyc record
+    const kycVerified = !!(user.kycVerified || (user.kyc && user.kyc.aadharVerified && user.kyc.panVerified));
 
     res.status(200).json({
       success: true,
@@ -29,7 +33,13 @@ exports.getProfile = async (req, res, next) => {
         avatar:        user.avatar        || user.profilePic || null,
         location:      user.location      || null,
         serviceRadius: user.serviceRadius || 25,
-        isVerified:    user.isVerified,
+        isVerified:    kycVerified,
+        kycVerified,
+        kyc: user.kyc ? {
+          status: user.kyc.status,
+          aadharVerified: user.kyc.aadharVerified,
+          panVerified: user.kyc.panVerified,
+        } : null,
       },
     });
   } catch (error) { next(error); }
@@ -149,6 +159,20 @@ exports.getPublicProfile = async (req, res, next) => {
     // Check if user was active recently (within last 15 minutes based on updatedAt)
     const isActive = user.updatedAt ? (Date.now() - new Date(user.updatedAt).getTime()) < 15 * 60 * 1000 : false;
 
+    // Build stats based on role
+    const stats = user.role === 'CLIENT' ? {
+      postedJobs: await Job.countDocuments({ client: user.id }),
+      activeJobs: await Job.countDocuments({ client: user.id, status: 'in-progress' }),
+      completedJobs: await Job.countDocuments({ client: user.id, status: 'completed' }),
+    } : {
+      activeProjects: activeProposals,
+      completedProjects: user.earnings?.completedJobs || completedProposals,
+      totalProposals,
+    };
+
+    // kycVerified = dedicated KYC flag (Aadhaar + PAN) — use as truth, fallback to kyc record
+    const kycVerified = !!(user.kycVerified || (user.kyc && user.kyc.aadharVerified && user.kyc.panVerified));
+
     res.status(200).json({
       success: true,
       data: {
@@ -156,14 +180,12 @@ exports.getPublicProfile = async (req, res, next) => {
         id: user.id,
         profilePic: user.profilePic || user.avatar,
         createdAt: user.createdAt,
+        isVerified: kycVerified,
+        kycVerified,
         kyc: user.kyc ? { status: user.kyc.status, aadharVerified: user.kyc.aadharVerified, panVerified: user.kyc.panVerified } : null,
         bankDetails: user.bankDetails ? { id: user.bankDetails._id } : null,
         earnings: user.earnings ? { completedJobs: user.earnings.completedJobs, allTimeIncome: user.earnings.allTimeIncome, rating: user.averageRating } : null,
-        stats: {
-          activeProjects: activeProposals,
-          completedProjects: user.earnings?.completedJobs || completedProposals,
-          totalProposals,
-        },
+        stats,
         isActive,
         verifications: {
           email: !!user.email,
@@ -175,6 +197,56 @@ exports.getPublicProfile = async (req, res, next) => {
         },
       },
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Block a user
+// @route   POST /api/v1/profile/block/:userId
+// @access  Private
+exports.blockUser = async (req, res, next) => {
+  try {
+    const targetUserId = req.params.userId;
+    if (targetUserId === req.user.id) {
+      return res.status(400).json({ success: false, message: 'You cannot block yourself' });
+    }
+
+    const targetUser = await User.findById(targetUserId);
+    if (!targetUser) {
+      return res.status(404).json({ success: false, message: 'User to block not found' });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user.blockedUsers) {
+      user.blockedUsers = [];
+    }
+
+    if (!user.blockedUsers.includes(targetUserId)) {
+      user.blockedUsers.push(targetUserId);
+      await user.save();
+    }
+
+    res.status(200).json({ success: true, message: 'User blocked successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Unblock a user
+// @route   POST /api/v1/profile/unblock/:userId
+// @access  Private
+exports.unblockUser = async (req, res, next) => {
+  try {
+    const targetUserId = req.params.userId;
+    const user = await User.findById(req.user.id);
+    
+    if (user.blockedUsers) {
+      user.blockedUsers = user.blockedUsers.filter(id => id !== targetUserId);
+      await user.save();
+    }
+
+    res.status(200).json({ success: true, message: 'User unblocked successfully' });
   } catch (error) {
     next(error);
   }

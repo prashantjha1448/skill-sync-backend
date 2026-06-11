@@ -1,6 +1,6 @@
 const socketHandler = (io) => {
   io.on('connection', (socket) => {
-    console.log(`🟢 Live Connection Started: ${socket.id}`);
+    console.log(`🟢 Live Connection Started: ${socket.id} (User: ${socket.userId || 'Guest'})`);
 
     // 1. PERSONAL ROOM (For Private Notifications)
     // Jab user login karega, wo apne ID ke naam ka ek room join kar lega

@@ -39,6 +39,22 @@ const kycSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    aadharOtp: {
+      type: String,
+      default: null,
+    },
+    aadharOtpExpiry: {
+      type: Date,
+      default: null,
+    },
+    aadharImage: {
+      type: String,
+      default: null,
+    },
+    panImage: {
+      type: String,
+      default: null,
+    },
   },
   { timestamps: true }
 );

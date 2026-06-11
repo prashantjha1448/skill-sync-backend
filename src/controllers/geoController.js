@@ -33,8 +33,25 @@ exports.getNearbyJobs = async (req, res, next) => {
     ];
 
     const jobs = await Job.find(query).limit(50);
-    const withDist = jobs.map((j) => ({
-      ...j.toObject(),
+    const enrichedJobs = await Promise.all(
+      jobs.map(async (job) => {
+        try {
+          const clientInfo = await User.findById(job.client)
+            .select('name username profilePic avatar email')
+            .lean();
+          if (clientInfo) {
+            clientInfo.id = clientInfo._id;
+            clientInfo.profilePic = clientInfo.profilePic || clientInfo.avatar;
+          }
+          return { ...job.toObject(), clientInfo };
+        } catch {
+          return job.toObject();
+        }
+      })
+    );
+
+    const withDist = enrichedJobs.map((j) => ({
+      ...j,
       distance: Math.round(haversine(Number(lat), Number(lng), j.location.coordinates[1], j.location.coordinates[0]) * 10) / 10,
     }));
 
@@ -73,10 +90,14 @@ exports.getNearbyFreelancers = async (req, res, next) => {
     }
 
     const freelancers = await User.find(query).select('-password').limit(50);
-    const withDist = freelancers.map((f) => ({
-      ...f.toObject(),
-      distance: Math.round(haversine(Number(lat), Number(lng), f.location.coordinates[1], f.location.coordinates[0]) * 10) / 10,
-    }));
+    const withDist = freelancers.map((f) => {
+      const obj = f.toObject();
+      return {
+        ...obj,
+        isVerified: !!(obj.kycVerified),  // KYC badge = Aadhaar + PAN only
+        distance: Math.round(haversine(Number(lat), Number(lng), f.location.coordinates[1], f.location.coordinates[0]) * 10) / 10,
+      };
+    });
 
     res.status(200).json({
       success: true,

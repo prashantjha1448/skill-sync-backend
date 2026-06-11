@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const Earnings = require('../models/Earnings');
+const Transaction = require('../models/Transaction');
 
 // Razorpay SDK - graceful fallback if not installed
 let Razorpay;
@@ -70,6 +71,15 @@ exports.verifyRazorpayPayment = async (req, res, next) => {
       { $inc: { walletBalance: amountINR } },
       { upsert: true, new: true }
     );
+
+    // Create deposit transaction record
+    await Transaction.create({
+      sender: req.user.id,
+      receiver: req.user.id,
+      amount: amountINR,
+      type: 'deposit',
+      status: 'completed'
+    });
 
     res.status(200).json({
       success: true,

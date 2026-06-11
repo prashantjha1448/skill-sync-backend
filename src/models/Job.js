@@ -20,6 +20,10 @@ const jobSchema = new mongoose.Schema(
       min: Number,
       max: Number,
     },
+    budget: {
+      type: Number,
+      default: 0,
+    },
     status: {
       type: String,
       enum: ['open', 'in-progress', 'completed', 'cancelled'],
@@ -32,6 +36,26 @@ const jobSchema = new mongoose.Schema(
     hiredFreelancer: {
       type: String,
       default: null,
+    },
+    assignedTo: {
+      type: String,
+      default: null,
+    },
+    completionRequestedByFreelancer: {
+      type: Boolean,
+      default: false,
+    },
+    completionRequestedByClient: {
+      type: Boolean,
+      default: false,
+    },
+    cancellationRequestedByFreelancer: {
+      type: Boolean,
+      default: false,
+    },
+    cancellationRequestedByClient: {
+      type: Boolean,
+      default: false,
     },
     
     // 🌍 GEO-LOCATION LOGIC
