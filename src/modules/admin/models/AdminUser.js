@@ -37,7 +37,6 @@ const adminUserSchema = new mongoose.Schema(
 adminUserSchema.virtual('id').get(function () { return this._id; });
 
 // Indexes
-adminUserSchema.index({ email: 1 });
 adminUserSchema.index({ role: 1, isActive: 1 });
 
 // Hash password before save
